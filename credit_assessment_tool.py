@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+from fpdf import FPDF
+from io import BytesIO
+from openpyxl import Workbook
 
 st.title("📝 Credit Assessment Tool")
 
@@ -19,6 +22,8 @@ if st.session_state.page == 1:
 
     # Retailer Basic Info
     st.subheader("Retailer Details")
+    state = st.text_input("State")
+    district = st.text_input("District")
     retailer_name = st.text_input("Retailer Name")
     sap_code = st.text_input("SAP Code")
     file_number = st.text_input("File Number")
@@ -59,11 +64,14 @@ if st.session_state.page == 1:
     other_expenses = st.number_input("Other Expenses")
 
     # Uploads
-    st.subheader("Upload Financial Statements & Other Docs")
-    uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True)
+    st.subheader("Upload Financial Statements & Other Docs (PDF)")
+    uploaded_file = st.file_uploader("Upload a PDF file")
 
-    if st.button("Next ➡️"):
+    col_next, col_exit = st.columns([1, 1])
+    if col_next.button("Next ➡️"):
         st.session_state.retailer_data = {
+            'State': state,
+            'District': district,
             'Retailer Name': retailer_name,
             'SAP Code': sap_code,
             'File Number': file_number,
@@ -91,16 +99,15 @@ if st.session_state.page == 1:
             'Finance Costs': finance_costs,
             'Depreciation': depreciation,
             'Other Expenses': other_expenses,
-            'Uploaded Files': uploaded_files
+            'Uploaded File': uploaded_file
         }
-        # Save uploaded files
-        folder_name = f"Retailers/{retailer_name.replace(' ', '_')}"
+        folder_name = f"Retailers/{state.replace(' ', '_')}/{district.replace(' ', '_')}/{retailer_name.replace(' ', '_')}"
         os.makedirs(folder_name, exist_ok=True)
-        for uploaded_file in uploaded_files:
+        if uploaded_file:
             with open(os.path.join(folder_name, uploaded_file.name), "wb") as f:
                 f.write(uploaded_file.getbuffer())
         st.session_state.page = 2
-        st.experimental_rerun()
+        st.rerun()
 
 ##############################################
 # PAGE 2: Ratio Calculation & Scoring
@@ -148,20 +155,23 @@ if st.session_state.page == 2:
 
     st.session_state.retailer_data['Ratios'] = ratios
 
-    if st.button("Next ➡️"):
+    col_back, col_next = st.columns([1, 1])
+    if col_back.button("⬅️ Back"):
+        st.session_state.page = 1
+        st.rerun()
+    if col_next.button("Next ➡️"):
         st.session_state.page = 3
-        st.experimental_rerun()
+        st.rerun()
 
 ##############################################
-# PAGE 3: Scoring & Final Report
+# PAGE 3: Final Report Generation
 ##############################################
 if st.session_state.page == 3:
-    st.header("3️⃣ Scoring & Final Report")
+    st.header("3️⃣ Generate PDF & Excel Report")
 
     data = st.session_state.retailer_data
     ratios = data['Ratios']
 
-    # Business & Managerial parameters
     st.subheader("Business & Managerial Inputs")
     business_score = st.slider("Business Score (0-25)", 0, 25, 15)
     managerial_score = st.slider("Managerial Score (0-10)", 0, 10, 5)
@@ -169,56 +179,46 @@ if st.session_state.page == 3:
     analyst = st.text_input("Analysed By")
     remarks = st.text_area("Remarks")
 
-    if st.button("Generate Final Report ✅"):
+    if st.button("Generate Reports ✅"):
+        folder_name = f"Retailers/{data['State'].replace(' ', '_')}/{data['District'].replace(' ', '_')}/{data['Retailer Name'].replace(' ', '_')}"
         final_score = (ratios['TOL/TNW'] + ratios['Current Ratio'] + ratios['PBDIT/Interest'] +
                        ratios['Net Cash Accruals/Total Debt (%)'] + ratios['Asset Turnover']) + \
                       business_score + managerial_score + quantity_increase
 
-        # Rating logic
-        if final_score > 80:
-            rating = "A+"
-        elif final_score > 75:
-            rating = "A"
-        elif final_score > 70:
-            rating = "A-"
-        elif final_score > 65:
-            rating = "B+"
-        elif final_score > 60:
-            rating = "B"
-        elif final_score > 50:
-            rating = "B-"
-        elif final_score > 40:
-            rating = "C+"
-        elif final_score > 30:
-            rating = "C"
-        else:
-            rating = "D"
+        # PDF report
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Credit Assessment Report", ln=True, align="C")
+        pdf.ln(10)
+        pdf.multi_cell(0, 10, txt=f"State: {data['State']}\nDistrict: {data['District']}\nRetailer: {data['Retailer Name']}\nSAP Code: {data['SAP Code']}\n"
+                                   f"File Number: {data['File Number']}\nDealing Period: {data['Dealing Period']}")
+        pdf.ln(5)
+        pdf.cell(200, 10, txt=f"Final Score: {round(final_score, 2)} | Analyst: {analyst}", ln=True)
+        pdf.multi_cell(0, 10, txt=f"Remarks: {remarks}")
+        pdf.ln(10)
+        pdf.cell(200, 10, txt="Calculated Ratios:", ln=True)
+        for k, v in ratios.items():
+            pdf.cell(200, 10, txt=f"{k}: {v}", ln=True)
+        pdf_file_path = f"{folder_name}/Final_Report.pdf"
+        pdf.output(pdf_file_path)
 
-        st.success(f"🎯 Final Credit Score: {round(final_score, 2)} | Rating: {rating}")
+        # Excel report
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Credit Report"
 
-        # Chart
-        chart_data = pd.Series({
-            'Financial Ratios Total': (ratios['TOL/TNW'] + ratios['Current Ratio'] +
-                                       ratios['PBDIT/Interest'] + ratios['Net Cash Accruals/Total Debt (%)'] +
-                                       ratios['Asset Turnover']),
-            'Business Score': business_score,
-            'Managerial Score': managerial_score,
-            'Quantity Increase': quantity_increase
-        })
-        st.bar_chart(chart_data)
+        ws.append(["State", data['State']])
+        ws.append(["District", data['District']])
+        ws.append(["Retailer Name", data['Retailer Name']])
+        ws.append(["SAP Code", data['SAP Code']])
+        ws.append(["File Number", data['File Number']])
+        ws.append([])
+        ws.append(["Ratios"])
+        for k, v in ratios.items():
+            ws.append([k, v])
 
-        # Save report
-        folder_name = f"Retailers/{data['Retailer Name'].replace(' ', '_')}"
-        report_data = {
-            'Retailer Name': data['Retailer Name'],
-            'SAP Code': data['SAP Code'],
-            'File Number': data['File Number'],
-            'Final Score': final_score,
-            'Rating': rating,
-            'Analyst': analyst,
-            'Remarks': remarks
-        }
-        df_report = pd.DataFrame([report_data])
-        df_report.to_excel(f"{folder_name}/Final_Report.xlsx", index=False)
-        st.success(f"✅ Report saved in: {folder_name}/Final_Report.xlsx")
+        excel_file_path = f"{folder_name}/Final_Report.xlsx"
+        wb.save(excel_file_path)
 
+        st.success(f"✅ PDF & Excel reports saved in: {folder_name}")
